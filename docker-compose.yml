@@ -1,0 +1,225 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: panel-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-panel}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-panel}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - panel-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-panel}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # NATS Message Broker
+  nats:
+    image: nats:2.10-alpine
+    container_name: panel-nats
+    restart: always
+    command: ["-js", "-m", "8222"]
+    volumes:
+      - nats_data:/data
+    networks:
+      - panel-network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Traefik Reverse Proxy
+  traefik:
+    image: traefik:v3.0
+    container_name: panel-traefik
+    restart: always
+    command:
+      - "--api.dashboard=true"
+      - "--api.insecure=false"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=panel-network"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entryPoint.scheme=https"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.letsencrypt.acme.email=${LETSENCRYPT_EMAIL}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      - "--log.level=INFO"
+      - "--accesslog=true"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_data:/letsencrypt
+    networks:
+      - panel-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.${PANEL_DOMAIN}`)"
+      - "traefik.http.routers.traefik.service=api@internal"
+      - "traefik.http.routers.traefik.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.traefik.middlewares=auth"
+      - "traefik.http.middlewares.auth.basicauth.users=admin:$$apr1$$xyz$$hashedpassword"
+
+  # Core API Service
+  core-api:
+    image: yourregistry/panel-core-api:latest
+    container_name: panel-core-api
+    restart: always
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-panel}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-panel}
+      NATS_URL: nats://nats:4222
+      JWT_SECRET: ${JWT_SECRET}
+      RUST_LOG: ${LOG_LEVEL:-info}
+      PANEL_DOMAIN: ${PANEL_DOMAIN}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - apps_data:/apps
+    networks:
+      - panel-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.api.rule=Host(`${PANEL_DOMAIN}`) || Host(`api.${PANEL_DOMAIN}`)"
+      - "traefik.http.routers.api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.api.loadbalancer.server.port=8000"
+
+  # Runtime Manager (handles all language runtimes)
+  runtime-manager:
+    image: yourregistry/panel-runtime-manager:latest
+    container_name: panel-runtime-manager
+    restart: always
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-panel}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-panel}
+      NATS_URL: nats://nats:4222
+      RUST_LOG: ${LOG_LEVEL:-info}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - apps_data:/apps
+      - buildpacks_data:/buildpacks
+    networks:
+      - panel-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+
+  # Web Daemon (Nginx config generator)
+  web-daemon:
+    image: yourregistry/panel-web-daemon:latest
+    container_name: panel-web-daemon
+    restart: always
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-panel}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-panel}
+      NATS_URL: nats://nats:4222
+      RUST_LOG: ${LOG_LEVEL:-info}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - apps_data:/apps
+    networks:
+      - panel-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+
+  # Mail Daemon (Postfix/Dovecot manager)
+  mail-daemon:
+    image: yourregistry/panel-mail-daemon:latest
+    container_name: panel-mail-daemon
+    restart: always
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-panel}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-panel}
+      NATS_URL: nats://nats:4222
+      RUST_LOG: ${LOG_LEVEL:-info}
+      PANEL_DOMAIN: ${PANEL_DOMAIN}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - mail_data:/mail
+    networks:
+      - panel-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+
+  # DNS Daemon (PowerDNS manager)
+  dns-daemon:
+    image: yourregistry/panel-dns-daemon:latest
+    container_name: panel-dns-daemon
+    restart: always
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-panel}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-panel}
+      NATS_URL: nats://nats:4222
+      RUST_LOG: ${LOG_LEVEL:-info}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - panel-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+
+  # Backup Daemon
+  backup-daemon:
+    image: yourregistry/panel-backup-daemon:latest
+    container_name: panel-backup-daemon
+    restart: always
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-panel}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-panel}
+      NATS_URL: nats://nats:4222
+      RUST_LOG: ${LOG_LEVEL:-info}
+      BACKUP_SCHEDULE: "0 2 * * *"  # Daily at 2 AM
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - backup_data:/backups
+      - apps_data:/apps:ro
+    networks:
+      - panel-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+
+networks:
+  panel-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  nats_data:
+    driver: local
+  traefik_data:
+    driver: local
+  apps_data:
+    driver: local
+  buildpacks_data:
+    driver: local
+  mail_data:
+    driver: local
+  backup_data:
+    driver: local
