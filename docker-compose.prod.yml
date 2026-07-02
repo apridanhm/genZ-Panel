@@ -1,0 +1,103 @@
+# Production overrides
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+version: '3.8'
+
+services:
+  # PostgreSQL - production settings
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    restart: always
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2'
+
+  # NATS - production settings
+  nats:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1'
+
+  # Traefik - enable in production
+  traefik:
+    profiles: []
+    restart: always
+
+  # Core API - use pre-built image
+  core-api:
+    image: ${REGISTRY}/panel-core-api:${VERSION}
+    build: !reset null
+    restart: always
+    environment:
+      RUST_LOG: info
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1'
+
+  # Runtime Manager - use pre-built image
+  runtime-manager:
+    image: ${REGISTRY}/panel-runtime-manager:${VERSION}
+    build: !reset null
+    restart: always
+    profiles: []
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '2'
+
+  # Web Daemon - use pre-built image
+  web-daemon:
+    image: ${REGISTRY}/panel-web-daemon:${VERSION}
+    build: !reset null
+    restart: always
+    profiles: []
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+
+  # Mail Daemon - use pre-built image
+  mail-daemon:
+    image: ${REGISTRY}/panel-mail-daemon:${VERSION}
+    build: !reset null
+    restart: always
+    profiles: []
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1'
+
+  # DNS Daemon - use pre-built image
+  dns-daemon:
+    image: ${REGISTRY}/panel-dns-daemon:${VERSION}
+    build: !reset null
+    restart: always
+    profiles: []
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+
+  # Backup Daemon - use pre-built image
+  backup-daemon:
+    image: ${REGISTRY}/panel-backup-daemon:${VERSION}
+    build: !reset null
+    restart: always
+    profiles: []
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1'

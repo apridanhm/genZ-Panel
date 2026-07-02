@@ -24,4 +24,3 @@ jsonwebtoken.workspace = true
 async-trait.workspace = true
 bollard.workspace = true
 async-nats.workspace = true
-figment.workspace = true

@@ -34,3 +34,16 @@ pub async fn list_applications() -> impl IntoResponse {
 pub async fn create_application() -> impl IntoResponse {
     (StatusCode::OK, Json(json!({"message": "Create app endpoint ready"})))
 }
+
+pub async fn root() -> impl IntoResponse {
+    (StatusCode::OK, Json(json!({
+        "service": "GenZ Panel API",
+        "version": "0.1.0",
+        "status": "running",
+        "endpoints": {
+            "health": "/health",
+            "register": "POST /api/v1/auth/register",
+            "login": "POST /api/v1/auth/login"
+        }
+    })))
+}

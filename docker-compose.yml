@@ -1,22 +1,24 @@
-version: '3.8'
-
 services:
   # PostgreSQL Database
   postgres:
     image: postgres:16-alpine
     container_name: panel-postgres
-    restart: always
+    restart: unless-stopped
+    env_file:
+      - .env
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-panel}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_password_123}
       POSTGRES_DB: ${POSTGRES_DB:-panel}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - panel-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-panel}"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 5
 
@@ -24,7 +26,10 @@ services:
   nats:
     image: nats:2.10-alpine
     container_name: panel-nats
-    restart: always
+    restart: unless-stopped
+    ports:
+      - "${NATS_PORT:-4222}:4222"
+      - "${NATS_MONITOR_PORT:-8222}:8222"
     command: ["-js", "-m", "8222"]
     volumes:
       - nats_data:/data
@@ -32,15 +37,17 @@ services:
       - panel-network
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8222/healthz"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 5
 
-  # Traefik Reverse Proxy
+  # Traefik Reverse Proxy (Production only)
   traefik:
     image: traefik:v3.0
     container_name: panel-traefik
-    restart: always
+    restart: unless-stopped
+    profiles:
+      - production
     command:
       - "--api.dashboard=true"
       - "--api.insecure=false"
@@ -76,15 +83,20 @@ services:
 
   # Core API Service
   core-api:
-    image: yourregistry/panel-core-api:latest
+    build:
+      context: .
+      dockerfile: crates/core-api/Dockerfile
+    image: ${REGISTRY:-local}/panel-core-api:${VERSION:-latest}
     container_name: panel-core-api
-    restart: always
+    restart: unless-stopped
+    env_file:
+      - .env
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-panel}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-panel}
+      DATABASE_URL: postgres://${POSTGRES_USER:-panel}:${POSTGRES_PASSWORD:-dev_password_123}@postgres:5432/${POSTGRES_DB:-panel}
       NATS_URL: nats://nats:4222
-      JWT_SECRET: ${JWT_SECRET}
+      JWT_SECRET: ${JWT_SECRET:-dev_jwt_secret_change_me}
       RUST_LOG: ${LOG_LEVEL:-info}
-      PANEL_DOMAIN: ${PANEL_DOMAIN}
+      PANEL_DOMAIN: ${PANEL_DOMAIN:-localhost}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - apps_data:/apps
@@ -97,17 +109,24 @@ services:
         condition: service_healthy
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.api.rule=Host(`${PANEL_DOMAIN}`) || Host(`api.${PANEL_DOMAIN}`)"
+      - "traefik.http.routers.api.rule=Host(`${PANEL_DOMAIN:-localhost}`) || Host(`api.${PANEL_DOMAIN:-localhost}`)"
       - "traefik.http.routers.api.tls.certresolver=letsencrypt"
       - "traefik.http.services.api.loadbalancer.server.port=8000"
 
-  # Runtime Manager (handles all language runtimes)
+  # Runtime Manager
   runtime-manager:
-    image: yourregistry/panel-runtime-manager:latest
+    build:
+      context: .
+      dockerfile: crates/runtime-manager/Dockerfile
+    image: ${REGISTRY:-local}/panel-runtime-manager:${VERSION:-latest}
     container_name: panel-runtime-manager
-    restart: always
+    restart: unless-stopped
+    profiles:
+      - production
+    env_file:
+      - .env
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-panel}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-panel}
+      DATABASE_URL: postgres://${POSTGRES_USER:-panel}:${POSTGRES_PASSWORD:-dev_password_123}@postgres:5432/${POSTGRES_DB:-panel}
       NATS_URL: nats://nats:4222
       RUST_LOG: ${LOG_LEVEL:-info}
     volumes:
@@ -122,13 +141,20 @@ services:
       nats:
         condition: service_healthy
 
-  # Web Daemon (Nginx config generator)
+  # Web Daemon
   web-daemon:
-    image: yourregistry/panel-web-daemon:latest
+    build:
+      context: .
+      dockerfile: crates/web-daemon/Dockerfile
+    image: ${REGISTRY:-local}/panel-web-daemon:${VERSION:-latest}
     container_name: panel-web-daemon
-    restart: always
+    restart: unless-stopped
+    profiles:
+      - production
+    env_file:
+      - .env
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-panel}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-panel}
+      DATABASE_URL: postgres://${POSTGRES_USER:-panel}:${POSTGRES_PASSWORD:-dev_password_123}@postgres:5432/${POSTGRES_DB:-panel}
       NATS_URL: nats://nats:4222
       RUST_LOG: ${LOG_LEVEL:-info}
     volumes:
@@ -142,16 +168,23 @@ services:
       nats:
         condition: service_healthy
 
-  # Mail Daemon (Postfix/Dovecot manager)
+  # Mail Daemon
   mail-daemon:
-    image: yourregistry/panel-mail-daemon:latest
+    build:
+      context: .
+      dockerfile: crates/mail-daemon/Dockerfile
+    image: ${REGISTRY:-local}/panel-mail-daemon:${VERSION:-latest}
     container_name: panel-mail-daemon
-    restart: always
+    restart: unless-stopped
+    profiles:
+      - production
+    env_file:
+      - .env
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-panel}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-panel}
+      DATABASE_URL: postgres://${POSTGRES_USER:-panel}:${POSTGRES_PASSWORD:-dev_password_123}@postgres:5432/${POSTGRES_DB:-panel}
       NATS_URL: nats://nats:4222
       RUST_LOG: ${LOG_LEVEL:-info}
-      PANEL_DOMAIN: ${PANEL_DOMAIN}
+      PANEL_DOMAIN: ${PANEL_DOMAIN:-localhost}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - mail_data:/mail
@@ -163,13 +196,20 @@ services:
       nats:
         condition: service_healthy
 
-  # DNS Daemon (PowerDNS manager)
+  # DNS Daemon
   dns-daemon:
-    image: yourregistry/panel-dns-daemon:latest
+    build:
+      context: .
+      dockerfile: crates/dns-daemon/Dockerfile
+    image: ${REGISTRY:-local}/panel-dns-daemon:${VERSION:-latest}
     container_name: panel-dns-daemon
-    restart: always
+    restart: unless-stopped
+    profiles:
+      - production
+    env_file:
+      - .env
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-panel}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-panel}
+      DATABASE_URL: postgres://${POSTGRES_USER:-panel}:${POSTGRES_PASSWORD:-dev_password_123}@postgres:5432/${POSTGRES_DB:-panel}
       NATS_URL: nats://nats:4222
       RUST_LOG: ${LOG_LEVEL:-info}
     volumes:
@@ -184,14 +224,21 @@ services:
 
   # Backup Daemon
   backup-daemon:
-    image: yourregistry/panel-backup-daemon:latest
+    build:
+      context: .
+      dockerfile: crates/backup-daemon/Dockerfile
+    image: ${REGISTRY:-local}/panel-backup-daemon:${VERSION:-latest}
     container_name: panel-backup-daemon
-    restart: always
+    restart: unless-stopped
+    profiles:
+      - production
+    env_file:
+      - .env
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-panel}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-panel}
+      DATABASE_URL: postgres://${POSTGRES_USER:-panel}:${POSTGRES_PASSWORD:-dev_password_123}@postgres:5432/${POSTGRES_DB:-panel}
       NATS_URL: nats://nats:4222
       RUST_LOG: ${LOG_LEVEL:-info}
-      BACKUP_SCHEDULE: "0 2 * * *"  # Daily at 2 AM
+      BACKUP_SCHEDULE: "0 2 * * *"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - backup_data:/backups
@@ -210,16 +257,9 @@ networks:
 
 volumes:
   postgres_data:
-    driver: local
   nats_data:
-    driver: local
   traefik_data:
-    driver: local
   apps_data:
-    driver: local
   buildpacks_data:
-    driver: local
   mail_data:
-    driver: local
   backup_data:
-    driver: local

@@ -1,3 +1,5 @@
+#![allow(dead_code)] // <-- Ini yang menghilangkan warning dead_code
+
 use axum::{
     routing::{get, post},
     Router,
@@ -41,8 +43,7 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     tracing::info!("Connected to database");
 
-    // Run migrations (Pastikan folder migrations/ ada di crates/core-api/)
-    // Jika folder migrations belum ada, comment baris ini dulu
+    // Run migrations
     sqlx::migrate!("./migrations").run(&db_pool).await?;
     tracing::info!("Database migrations completed");
 
@@ -64,6 +65,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Build router
     let app = Router::new()
+        .route("/", get(handlers::root))
         .route("/health", get(handlers::health_check))
         .route("/api/v1/auth/register", post(handlers::register))
         .route("/api/v1/auth/login", post(handlers::login))

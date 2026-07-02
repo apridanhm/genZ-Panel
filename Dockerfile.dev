@@ -1,0 +1,27 @@
+# Development Dockerfile dengan hot-reload
+FROM rust:1.85-slim-bookworm
+
+WORKDIR /app
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install cargo-watch untuk hot-reload
+RUN cargo install cargo-watch
+
+# Copy workspace files
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+
+# Build dependencies (caching layer)
+RUN cargo build --package core-api
+
+# Expose port
+EXPOSE 8000
+
+# Default command: run dengan hot-reload
+CMD ["cargo", "watch", "-x", "run", "--package", "core-api"]
