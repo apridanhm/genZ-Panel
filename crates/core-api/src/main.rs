@@ -1,4 +1,4 @@
-#![allow(dead_code)] // <-- Ini yang menghilangkan warning dead_code
+#![allow(dead_code)]
 
 use axum::{
     routing::{get, post},
@@ -10,6 +10,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod config;
 mod error;
+mod extractors;
 mod handlers;
 mod middleware;
 mod models;
@@ -69,12 +70,16 @@ async fn main() -> anyhow::Result<()> {
         .route("/health", get(handlers::health_check))
         .route("/api/v1/auth/register", post(handlers::register))
         .route("/api/v1/auth/login", post(handlers::login))
+        // Protected routes
         .route("/api/v1/users/me", get(handlers::get_current_user))
         .route("/api/v1/domains", get(handlers::list_domains))
         .route("/api/v1/domains", post(handlers::create_domain))
         .route("/api/v1/applications", get(handlers::list_applications))
         .route("/api/v1/applications", post(handlers::create_application))
-        .layer(axum::middleware::from_fn(middleware::auth_middleware))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            middleware::auth::auth_middleware,
+        ))
         .with_state(state);
 
     // Start server
