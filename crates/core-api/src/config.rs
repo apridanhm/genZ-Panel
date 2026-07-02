@@ -1,3 +1,6 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
     pub database_url: String,
     pub nats_url: String,
