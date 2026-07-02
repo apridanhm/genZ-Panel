@@ -1,12 +1,14 @@
-use axum::extract::State;
-use axum::http::StatusCode;
-use axum::response::IntoResponse;
-use axum::Json;
+use axum::{
+    extract::{Extension, State},
+    http::StatusCode,
+    response::IntoResponse,
+    Json,
+};
 use serde_json::json;
 use validator::Validate;
 
 use crate::error::AppError;
-use crate::extractors::AuthUser;
+use crate::middleware::auth::Claims;
 use crate::models::{LoginRequest, RegisterRequest};
 use crate::services::auth;
 use crate::state::AppState;
@@ -47,8 +49,8 @@ pub async fn login(
     Ok(Json(response))
 }
 
-// Protected endpoint
-pub async fn get_current_user(AuthUser(claims): AuthUser) -> impl IntoResponse {
+// Protected endpoint - pakai Extension<Claims>
+pub async fn get_current_user(Extension(claims): Extension<Claims>) -> impl IntoResponse {
     (StatusCode::OK, Json(json!({
         "user_id": claims.sub,
         "email": claims.email,
@@ -56,28 +58,28 @@ pub async fn get_current_user(AuthUser(claims): AuthUser) -> impl IntoResponse {
     })))
 }
 
-pub async fn list_domains(AuthUser(claims): AuthUser) -> impl IntoResponse {
+pub async fn list_domains(Extension(claims): Extension<Claims>) -> impl IntoResponse {
     (StatusCode::OK, Json(json!({
         "message": "List domains endpoint ready",
         "user_id": claims.sub
     })))
 }
 
-pub async fn create_domain(AuthUser(claims): AuthUser) -> impl IntoResponse {
+pub async fn create_domain(Extension(claims): Extension<Claims>) -> impl IntoResponse {
     (StatusCode::OK, Json(json!({
         "message": "Create domain endpoint ready",
         "user_id": claims.sub
     })))
 }
 
-pub async fn list_applications(AuthUser(claims): AuthUser) -> impl IntoResponse {
+pub async fn list_applications(Extension(claims): Extension<Claims>) -> impl IntoResponse {
     (StatusCode::OK, Json(json!({
         "message": "List apps endpoint ready",
         "user_id": claims.sub
     })))
 }
 
-pub async fn create_application(AuthUser(claims): AuthUser) -> impl IntoResponse {
+pub async fn create_application(Extension(claims): Extension<Claims>) -> impl IntoResponse {
     (StatusCode::OK, Json(json!({
         "message": "Create app endpoint ready",
         "user_id": claims.sub

@@ -14,6 +14,9 @@ pub enum AppError {
     #[error("Invalid credentials")]
     InvalidCredentials,
     
+    #[error("Unauthorized")]
+    Unauthorized,
+    
     #[error("Validation error: {0}")]
     Validation(String),
     
@@ -27,6 +30,7 @@ impl IntoResponse for AppError {
             AppError::Database(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Database error"),
             AppError::UserAlreadyExists => (StatusCode::CONFLICT, "User already exists"),
             AppError::InvalidCredentials => (StatusCode::UNAUTHORIZED, "Invalid credentials"),
+            AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized"),
             AppError::Validation(ref msg) => (StatusCode::BAD_REQUEST, msg.as_str()),
             AppError::Internal => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error"),
         };

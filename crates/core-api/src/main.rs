@@ -10,7 +10,6 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod config;
 mod error;
-mod extractors;
 mod handlers;
 mod middleware;
 mod models;
@@ -22,41 +21,34 @@ use state::AppState;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize logging
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "core_api=debug,tower_http=debug".into()),
+                .unwrap_or_else(|_| "core_api=info,tower_http=info".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
 
     tracing::info!("Starting Core API...");
 
-    // Load configuration
     let config = Config::load()?;
     tracing::info!("Configuration loaded");
 
-    // Connect to database
     let db_pool = PgPoolOptions::new()
         .max_connections(10)
         .connect(&config.database_url)
         .await?;
     tracing::info!("Connected to database");
 
-    // Run migrations
     sqlx::migrate!("./migrations").run(&db_pool).await?;
     tracing::info!("Database migrations completed");
 
-    // Connect to NATS
     let nats_client = async_nats::connect(config.nats_url.clone()).await?;
     tracing::info!("Connected to NATS");
 
-    // Initialize Docker client
     let docker_client = bollard::Docker::connect_with_local_defaults()?;
     tracing::info!("Connected to Docker");
 
-    // Create app state
     let state = AppState {
         config,
         db: db_pool,
@@ -64,13 +56,15 @@ async fn main() -> anyhow::Result<()> {
         docker: docker_client,
     };
 
-    // Build router
-    let app = Router::new()
+    // Public routes (no auth required)
+    let public_routes = Router::new()
         .route("/", get(handlers::root))
         .route("/health", get(handlers::health_check))
         .route("/api/v1/auth/register", post(handlers::register))
-        .route("/api/v1/auth/login", post(handlers::login))
-        // Protected routes
+        .route("/api/v1/auth/login", post(handlers::login));
+
+    // Protected routes (auth required)
+    let protected_routes = Router::new()
         .route("/api/v1/users/me", get(handlers::get_current_user))
         .route("/api/v1/domains", get(handlers::list_domains))
         .route("/api/v1/domains", post(handlers::create_domain))
@@ -79,10 +73,11 @@ async fn main() -> anyhow::Result<()> {
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::auth::auth_middleware,
-        ))
-        .with_state(state);
+        ));
 
-    // Start server
+    // Combine routes
+    let app = public_routes.merge(protected_routes).with_state(state);
+
     let addr = SocketAddr::from(([0, 0, 0, 0], 8000));
     tracing::info!("Server listening on {}", addr);
     
