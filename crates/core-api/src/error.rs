@@ -1,29 +1,41 @@
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
+use axum::Json;
+use serde_json::json;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
     
-    #[error("Not found")]
-    NotFound,
+    #[error("User already exists")]
+    UserAlreadyExists,
     
-    #[error("Unauthorized")]
-    Unauthorized,
+    #[error("Invalid credentials")]
+    InvalidCredentials,
+    
+    #[error("Validation error: {0}")]
+    Validation(String),
     
     #[error("Internal server error")]
     Internal,
 }
 
 impl IntoResponse for AppError {
-    fn into_response(self) -> axum::response::Response {
-        let status = match self {
-            AppError::NotFound => StatusCode::NOT_FOUND,
-            AppError::Unauthorized => StatusCode::UNAUTHORIZED,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
+    fn into_response(self) -> Response {
+        let (status, error_message) = match self {
+            AppError::Database(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Database error"),
+            AppError::UserAlreadyExists => (StatusCode::CONFLICT, "User already exists"),
+            AppError::InvalidCredentials => (StatusCode::UNAUTHORIZED, "Invalid credentials"),
+            AppError::Validation(ref msg) => (StatusCode::BAD_REQUEST, msg.as_str()),
+            AppError::Internal => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error"),
         };
-        
-        (status, self.to_string()).into_response()
+
+        let body = Json(json!({
+            "error": error_message,
+            "message": self.to_string()
+        }));
+
+        (status, body).into_response()
     }
 }
