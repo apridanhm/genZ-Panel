@@ -11,11 +11,17 @@ pub enum AppError {
     #[error("User already exists")]
     UserAlreadyExists,
     
+    #[error("Domain already exists")]
+    DomainAlreadyExists,
+    
     #[error("Invalid credentials")]
     InvalidCredentials,
     
     #[error("Unauthorized")]
     Unauthorized,
+    
+    #[error("Not found")]
+    NotFound,
     
     #[error("Validation error: {0}")]
     Validation(String),
@@ -29,8 +35,10 @@ impl IntoResponse for AppError {
         let (status, error_message) = match self {
             AppError::Database(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Database error"),
             AppError::UserAlreadyExists => (StatusCode::CONFLICT, "User already exists"),
+            AppError::DomainAlreadyExists => (StatusCode::CONFLICT, "Domain already exists"),
             AppError::InvalidCredentials => (StatusCode::UNAUTHORIZED, "Invalid credentials"),
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized"),
+            AppError::NotFound => (StatusCode::NOT_FOUND, "Not found"),
             AppError::Validation(ref msg) => (StatusCode::BAD_REQUEST, msg.as_str()),
             AppError::Internal => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error"),
         };

@@ -1,7 +1,7 @@
 [package]
 name = "core-api"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
 tokio.workspace = true
@@ -24,3 +24,5 @@ jsonwebtoken.workspace = true
 async-trait.workspace = true
 bollard.workspace = true
 async-nats.workspace = true
+utoipa.workspace = true
+utoipa-swagger-ui.workspace = true

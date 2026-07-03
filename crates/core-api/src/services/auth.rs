@@ -10,12 +10,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::error::AppError;
 use crate::models::{AuthResponse, LoginRequest, RegisterRequest, User, UserResponse};
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Claims {
-    sub: String, // user id
-    email: String,
-    role: String,
-    exp: usize, // expiration time
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Claims {
+    pub sub: String,
+    pub email: String,
+    pub role: String,
+    pub exp: usize,
 }
 
 pub async fn register(db: &PgPool, req: RegisterRequest, jwt_secret: &str) -> Result<AuthResponse, AppError> {
@@ -28,16 +28,27 @@ pub async fn register(db: &PgPool, req: RegisterRequest, jwt_secret: &str) -> Re
         .to_string();
 
     // 2. Insert ke database
-    let user = sqlx::query_as::<_, User>(
+    let result = sqlx::query_as::<_, User>(
         "INSERT INTO users (email, password_hash, full_name) VALUES ($1, $2, $3) RETURNING *"
     )
     .bind(&req.email)
     .bind(&password_hash)
     .bind(&req.full_name)
     .fetch_optional(db)
-    .await?;
+    .await;
 
-    let user = user.ok_or(AppError::Internal)?;
+    // Handle duplicate key error
+    let user = match result {
+        Ok(Some(user)) => user,
+        Ok(None) => return Err(AppError::Internal),
+        Err(e) => {
+            // Check if it's a unique constraint violation
+            if e.to_string().contains("duplicate key") || e.to_string().contains("unique constraint") {
+                return Err(AppError::UserAlreadyExists);
+            }
+            return Err(AppError::Database(e));
+        }
+    };
 
     // 3. Generate JWT
     let token = generate_jwt(&user, jwt_secret)?;
