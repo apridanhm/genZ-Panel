@@ -13,6 +13,7 @@ use utoipa_swagger_ui::SwaggerUi;
 
 mod config;
 mod error;
+mod events;
 mod handlers;
 mod middleware;
 mod models;
@@ -21,6 +22,7 @@ mod services;
 mod state;
 
 use config::Config;
+use events::EventPublisher;
 use openapi::ApiDoc;
 use state::AppState;
 
@@ -54,11 +56,15 @@ async fn main() -> anyhow::Result<()> {
     let docker_client = bollard::Docker::connect_with_local_defaults()?;
     tracing::info!("Connected to Docker");
 
+    // Initialize Event Publisher
+    let event_publisher = EventPublisher::new(nats_client.clone());
+
     let state = AppState {
         config,
         db: db_pool,
         nats: nats_client,
         docker: docker_client,
+        event_publisher,
     };
 
     // Public routes
@@ -68,36 +74,29 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/auth/register", post(handlers::register))
         .route("/api/v1/auth/login", post(handlers::login));
 
-    // Protected routes - GANTI {id} jadi :id
+    // Protected routes
     let protected_routes = Router::new()
-        // User endpoints
         .route("/api/v1/users/me", get(handlers::get_current_user))
-        // Domain endpoints - FIX: pakai :id bukan {id}
         .route("/api/v1/domains", post(handlers::create_domain))
         .route("/api/v1/domains", get(handlers::list_domains))
         .route("/api/v1/domains/:id", get(handlers::get_domain))
         .route("/api/v1/domains/:id", put(handlers::update_domain))
         .route("/api/v1/domains/:id", delete(handlers::delete_domain))
-        // Application endpoints (placeholder)
         .route("/api/v1/applications", get(handlers::list_applications))
         .route("/api/v1/applications", post(handlers::create_application))
-        // Auth middleware
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::auth::auth_middleware,
         ));
 
-    // CORS layer
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
 
-    // Swagger UI
     let swagger_ui = SwaggerUi::new("/swagger-ui")
         .url("/api-docs/openapi.json", ApiDoc::openapi());
 
-    // Combine all routes
     let app = public_routes
         .merge(protected_routes)
         .merge(swagger_ui)

@@ -1,0 +1,88 @@
+# Development overrides - file ini di-gitignore
+# Auto-loaded saat run: docker compose up
+
+version: '3.8'
+
+services:
+  # PostgreSQL - expose port untuk development
+  postgres:
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: panel_dev
+      POSTGRES_PASSWORD: dev_password_123
+      POSTGRES_DB: panel_dev
+
+  # NATS - expose port untuk development
+  nats:
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+
+  # Core API - run dari source dengan hot-reload
+  core-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    image: local/panel-core-api:dev
+    volumes:
+      - ./crates/core-api/src:/app/src:ro
+      - ./crates/core-api/migrations:/app/migrations:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: cargo watch -x run --package core-api
+    environment:
+      DATABASE_URL: postgres://panel_dev:dev_password_123@postgres:5432/panel_dev
+      NATS_URL: nats://nats:4222
+      JWT_SECRET: dev_jwt_secret_key_change_in_production
+      RUST_LOG: debug
+      RUST_BACKTRACE: "1"
+    ports:
+      - "8000:8000"
+
+  # Disable production services in development
+  traefik:
+    profiles:
+      - donotstart
+
+  runtime-manager:
+    profiles:
+      - donotstart
+
+  web-daemon:
+    profiles:
+      - donotstart
+
+  mail-daemon:
+    profiles:
+      - donotstart
+
+  dns-daemon:
+    profiles:
+      - donotstart
+
+  backup-daemon:
+    profiles:
+      - donotstart
+
+  # PowerDNS Authoritative Server - DNS management
+  pdns:
+    image: powerdns/pdns-auth-48:latest
+    container_name: panel-pdns
+    restart: unless-stopped
+    environment:
+      - PDNS_AUTH_API_KEY=supersecretapikey123
+    ports:
+      - "5353:53/tcp"
+      - "5353:53/udp"
+      - "8081:8081"
+    volumes:
+      - pdns_data:/var/lib/powerdns
+    command: >
+      --launch=bind
+      --api=yes
+      --api-key=supersecretapikey123
+      --webserver-address=0.0.0.0
+      --webserver-port=8081
+      --webserver-allow-from=0.0.0.0/0
+      --setuid=pdns
+      --setgid=pdns
