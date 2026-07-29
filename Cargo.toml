@@ -8,6 +8,8 @@ members = [
     "crates/builder",
     "crates/proxy-manager",
     "crates/cli", "crates/dns-daemon",
+    "crates/ssl-daemon",
+    "crates/web-daemon", "crates/ssl-daemon", "crates/web-daemon",
 ]
 resolver = "2"
 
@@ -44,6 +46,7 @@ thiserror = "1.0"
 anyhow = "1.0"
 futures = "0.3"
 reqwest = { version = "0.11", features = ["json"] }
+acme2 = "0.5"
 
 # Logging
 tracing = "0.1"

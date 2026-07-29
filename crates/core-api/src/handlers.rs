@@ -68,14 +68,14 @@ pub async fn health_check() -> impl IntoResponse {
     (StatusCode::OK, Json(json!({"status": "ok", "service": "core-api"})))
 }
 
-#[utoipa::path(post, path = "/api/v1/auth/register", tag = "Authentication", request_body = RegisterRequest, responses((status = 201, description = "User registered successfully", body = crate::models::AuthResponse), (status = 400, description = "Validation error"), (status = 409, description = "User already exists")))]
+#[utoipa::path(post, path = "/api/v1/auth/register", tag = "Authentication", request_body = RegisterRequest, responses((status = 201, description = "User registered successfully", body = AuthResponse), (status = 400, description = "Validation error"), (status = 409, description = "User already exists")))]
 pub async fn register(State(state): State<AppState>, Json(req): Json<RegisterRequest>) -> Result<impl IntoResponse, AppError> {
     req.validate().map_err(|e| AppError::Validation(e.to_string()))?;
     let response = auth::register(&state.db, req, &state.config.jwt_secret).await?;
     Ok((StatusCode::CREATED, Json(response)))
 }
 
-#[utoipa::path(post, path = "/api/v1/auth/login", tag = "Authentication", request_body = LoginRequest, responses((status = 200, description = "Login successful", body = crate::models::AuthResponse), (status = 401, description = "Invalid credentials")))]
+#[utoipa::path(post, path = "/api/v1/auth/login", tag = "Authentication", request_body = LoginRequest, responses((status = 200, description = "Login successful", body = AuthResponse), (status = 401, description = "Invalid credentials")))]
 pub async fn login(State(state): State<AppState>, Json(req): Json<LoginRequest>) -> Result<impl IntoResponse, AppError> {
     req.validate().map_err(|e| AppError::Validation(e.to_string()))?;
     let response = auth::login(&state.db, req, &state.config.jwt_secret).await?;

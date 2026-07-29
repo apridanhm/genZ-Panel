@@ -30,6 +30,8 @@ pub struct Domain {
     #[schema(example = "active")]
     pub status: String,
     pub ssl_enabled: bool,
+    #[schema(example = "letsencrypt")]
+    pub ssl_provider: Option<String>,
     pub ssl_cert_path: Option<String>,
     pub ssl_key_path: Option<String>,
     #[schema(value_type = Option<String>)]
@@ -83,6 +85,15 @@ pub struct UpdateDomainRequest {
     
     #[schema(example = "active")]
     pub status: Option<String>,
+    
+    #[schema(example = "letsencrypt")]
+    pub ssl_provider: Option<String>,
+    
+    #[schema(example = "-----BEGIN CERTIFICATE-----\n...")]
+    pub ssl_certificate: Option<String>,
+    
+    #[schema(example = "-----BEGIN PRIVATE KEY-----\n...")]
+    pub ssl_private_key: Option<String>,
 }
 
 // --- Response DTOs ---
@@ -114,6 +125,8 @@ pub struct DomainResponse {
     #[schema(example = "active")]
     pub status: String,
     pub ssl_enabled: bool,
+    #[schema(example = "letsencrypt")]
+    pub ssl_provider: Option<String>,
     #[schema(value_type = Option<String>)]
     pub ssl_expires_at: Option<DateTime<Utc>>,
     #[schema(value_type = String)]
@@ -140,6 +153,7 @@ impl From<Domain> for DomainResponse {
             domain_name: domain.domain_name,
             status: domain.status,
             ssl_enabled: domain.ssl_enabled,
+            ssl_provider: domain.ssl_provider,
             ssl_expires_at: domain.ssl_expires_at,
             created_at: domain.created_at,
             updated_at: domain.updated_at,

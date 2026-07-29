@@ -1,6 +1,6 @@
 use async_nats::Client;
 use serde::{Deserialize, Serialize};
-use tracing::{error, info};
+use tracing::info;
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
 
