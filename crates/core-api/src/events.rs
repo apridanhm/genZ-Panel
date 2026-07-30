@@ -36,6 +36,7 @@ pub struct AppDeployTriggered {
     pub user_id: Uuid,
     pub name: String,
     pub runtime: String,
+    pub runtime_version: Option<String>,
     pub source_type: String,
     pub git_repo_url: Option<String>,
     pub git_branch: Option<String>,

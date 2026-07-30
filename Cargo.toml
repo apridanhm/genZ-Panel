@@ -9,7 +9,8 @@ members = [
     "crates/proxy-manager",
     "crates/cli", "crates/dns-daemon",
     "crates/ssl-daemon",
-    "crates/web-daemon", "crates/ssl-daemon", "crates/web-daemon",
+    "crates/web-daemon",
+    "crates/builder-daemon", "crates/ssl-daemon", "crates/web-daemon", "crates/builder-daemon",
 ]
 resolver = "2"
 

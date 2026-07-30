@@ -56,6 +56,7 @@ pub async fn create_app(
         user_id,
         name: app.name.clone(),
         runtime: app.runtime.clone(),
+        runtime_version: app.runtime_version.clone(),
         source_type: app.source_type.clone().unwrap_or_else(|| "git".to_string()),
         git_repo_url: app.git_repo_url.clone(),
         git_branch: app.git_branch.clone(),
