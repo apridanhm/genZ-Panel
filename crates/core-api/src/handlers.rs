@@ -13,10 +13,11 @@ use validator::Validate;
 use crate::error::AppError;
 use crate::middleware::auth::Claims;
 use crate::models::{
+    CreateAppRequest, AppResponse,
     CreateDomainRequest, DomainResponse, LoginRequest, RegisterRequest,
     UpdateDomainRequest,
 };
-use crate::services::{auth, domain};
+use crate::services::{auth, domain, app};
 use crate::state::AppState;
 
 #[derive(serde::Serialize, ToSchema)]
@@ -130,4 +131,60 @@ pub async fn list_applications(Extension(claims): Extension<Claims>) -> impl Int
 
 pub async fn create_application(Extension(claims): Extension<Claims>) -> impl IntoResponse {
     (StatusCode::OK, Json(json!({"message": "Create app endpoint ready", "user_id": claims.sub})))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/apps",
+    request_body = CreateAppRequest,
+    responses(
+        (status = 201, description = "Application created successfully", body = AppResponse),
+        (status = 400, description = "Validation error"),
+        (status = 401, description = "Unauthorized")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn create_app_handler(
+    State(state): State<AppState>,
+    ExtractUser(user): ExtractUser,
+    Json(req): Json<CreateAppRequest>,
+) -> Result<(StatusCode, Json<AppResponse>), AppError> {
+    let app = services::app::create_app(&state.db, user.id, req, &state.publisher).await?;
+    Ok((StatusCode::CREATED, Json(app)))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/apps",
+    responses(
+        (status = 200, description = "List of applications", body = Vec<AppResponse>),
+        (status = 401, description = "Unauthorized")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn list_apps_handler(
+    State(state): State<AppState>,
+    ExtractUser(user): ExtractUser,
+) -> Result<Json<Vec<AppResponse>>, AppError> {
+    let apps = services::app::list_apps(&state.db, user.id).await?;
+    Ok(Json(apps))
+}
+
+pub async fn create_app_handler(
+    State(state): State<crate::AppState>,
+    Extension(claims): Extension<Claims>,
+    Json(req): Json<CreateAppRequest>,
+) -> Result<(StatusCode, Json<AppResponse>), AppError> {
+    let user_id = Uuid::parse_str(&claims.sub).map_err(|_| AppError::Unauthorized)?;
+    let app = app::create_app(&state.db, user_id, req, &state.event_publisher).await?;
+    Ok((StatusCode::CREATED, Json(app)))
+}
+
+pub async fn list_apps_handler(
+    State(state): State<crate::AppState>,
+    Extension(claims): Extension<Claims>,
+) -> Result<Json<Vec<AppResponse>>, AppError> {
+    let user_id = Uuid::parse_str(&claims.sub).map_err(|_| AppError::Unauthorized)?;
+    let apps = app::list_apps(&state.db, user_id).await?;
+    Ok(Json(apps))
 }

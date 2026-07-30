@@ -21,16 +21,13 @@ pub struct User {
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, ToSchema)]
 pub struct Domain {
-    #[schema(value_type = String, example = "550e8400-e29b-41d4-a716-446655440000")]
+    #[schema(value_type = String)]
     pub id: Uuid,
-    #[schema(value_type = String, example = "550e8400-e29b-41d4-a716-446655440000")]
+    #[schema(value_type = String)]
     pub user_id: Uuid,
-    #[schema(example = "example.com")]
     pub domain_name: String,
-    #[schema(example = "active")]
     pub status: String,
     pub ssl_enabled: bool,
-    #[schema(example = "letsencrypt")]
     pub ssl_provider: Option<String>,
     pub ssl_cert_path: Option<String>,
     pub ssl_key_path: Option<String>,
@@ -42,90 +39,113 @@ pub struct Domain {
     pub updated_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, ToSchema)]
+pub struct Application {
+    #[schema(value_type = String)]
+    pub id: Uuid,
+    #[schema(value_type = String)]
+    pub user_id: Uuid,
+    #[schema(value_type = String)]
+    pub domain_id: Option<Uuid>,
+    pub name: String,
+    pub runtime: String,
+    pub runtime_version: Option<String>,
+    pub path: String,
+    pub build_command: Option<String>,
+    pub start_command: Option<String>,
+    pub exposed_port: Option<i32>,
+    pub status: String,
+    pub container_id: Option<String>,
+    pub env_vars: Option<serde_json::Value>,
+    pub resources: Option<serde_json::Value>,
+    pub source_type: Option<String>,
+    pub git_repo_url: Option<String>,
+    pub git_branch: Option<String>,
+    pub zip_file_path: Option<String>,
+    #[schema(value_type = String)]
+    pub created_at: DateTime<Utc>,
+    #[schema(value_type = String)]
+    pub updated_at: DateTime<Utc>,
+}
+
 // --- Request DTOs ---
 #[derive(Debug, Deserialize, validator::Validate, ToSchema)]
 pub struct RegisterRequest {
     #[validate(email)]
-    #[schema(example = "admin@genzpanel.com")]
     pub email: String,
-    
-    #[validate(length(min = 8, message = "Password minimal 8 karakter"))]
-    #[schema(example = "supersecretpassword123")]
+    #[validate(length(min = 8))]
     pub password: String,
-    
     #[validate(length(min = 2, max = 100))]
-    #[schema(example = "Admin GenZ")]
     pub full_name: String,
 }
 
 #[derive(Debug, Deserialize, validator::Validate, ToSchema)]
 pub struct LoginRequest {
     #[validate(email)]
-    #[schema(example = "admin@genzpanel.com")]
     pub email: String,
-    
-    #[schema(example = "supersecretpassword123")]
     pub password: String,
 }
 
 #[derive(Debug, Deserialize, validator::Validate, ToSchema)]
 pub struct CreateDomainRequest {
     #[validate(length(min = 3, max = 255))]
-    #[schema(example = "example.com")]
     pub domain_name: String,
-    
-    #[schema(example = true)]
     pub ssl_enabled: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, validator::Validate, ToSchema)]
 pub struct UpdateDomainRequest {
-    #[schema(example = true)]
     pub ssl_enabled: Option<bool>,
-    
-    #[schema(example = "active")]
     pub status: Option<String>,
-    
-    #[schema(example = "letsencrypt")]
     pub ssl_provider: Option<String>,
-    
-    #[schema(example = "-----BEGIN CERTIFICATE-----\n...")]
     pub ssl_certificate: Option<String>,
-    
-    #[schema(example = "-----BEGIN PRIVATE KEY-----\n...")]
     pub ssl_private_key: Option<String>,
+}
+
+#[derive(Debug, Deserialize, validator::Validate, ToSchema)]
+pub struct CreateAppRequest {
+    #[schema(value_type = String)]
+    pub domain_id: Option<Uuid>,
+    #[validate(length(min = 3, max = 100))]
+    pub name: String,
+    #[validate(length(min = 2, max = 50))]
+    pub runtime: String,
+    pub runtime_version: Option<String>,
+    pub path: Option<String>,
+    pub build_command: Option<String>,
+    pub start_command: Option<String>,
+    pub exposed_port: Option<i32>,
+    pub env_vars: Option<serde_json::Value>,
+    pub resources: Option<serde_json::Value>,
+    pub source_type: Option<String>,
+    pub git_repo_url: Option<String>,
+    pub git_branch: Option<String>,
+    pub zip_file_path: Option<String>,
 }
 
 // --- Response DTOs ---
 #[derive(Debug, Serialize, ToSchema)]
 pub struct AuthResponse {
-    #[schema(example = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...")]
     pub token: String,
     pub user: UserResponse,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct UserResponse {
-    #[schema(value_type = String, example = "550e8400-e29b-41d4-a716-446655440000")]
+    #[schema(value_type = String)]
     pub id: Uuid,
-    #[schema(example = "admin@genzpanel.com")]
     pub email: String,
-    #[schema(example = "Admin GenZ")]
     pub full_name: String,
-    #[schema(example = "user")]
     pub role: String,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct DomainResponse {
-    #[schema(value_type = String, example = "550e8400-e29b-41d4-a716-446655440000")]
+    #[schema(value_type = String)]
     pub id: Uuid,
-    #[schema(example = "example.com")]
     pub domain_name: String,
-    #[schema(example = "active")]
     pub status: String,
     pub ssl_enabled: bool,
-    #[schema(example = "letsencrypt")]
     pub ssl_provider: Option<String>,
     #[schema(value_type = Option<String>)]
     pub ssl_expires_at: Option<DateTime<Utc>>,
@@ -133,6 +153,25 @@ pub struct DomainResponse {
     pub created_at: DateTime<Utc>,
     #[schema(value_type = String)]
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AppResponse {
+    #[schema(value_type = String)]
+    pub id: Uuid,
+    #[schema(value_type = String)]
+    pub domain_id: Option<Uuid>,
+    pub name: String,
+    pub runtime: String,
+    pub runtime_version: Option<String>,
+    pub source_type: Option<String>,
+    pub git_repo_url: Option<String>,
+    pub git_branch: Option<String>,
+    pub start_command: Option<String>,
+    pub exposed_port: Option<i32>,
+    pub status: String,
+    #[schema(value_type = String)]
+    pub created_at: DateTime<Utc>,
 }
 
 impl From<User> for UserResponse {
@@ -157,6 +196,25 @@ impl From<Domain> for DomainResponse {
             ssl_expires_at: domain.ssl_expires_at,
             created_at: domain.created_at,
             updated_at: domain.updated_at,
+        }
+    }
+}
+
+impl From<Application> for AppResponse {
+    fn from(app: Application) -> Self {
+        Self {
+            id: app.id,
+            domain_id: app.domain_id,
+            name: app.name,
+            runtime: app.runtime,
+            runtime_version: app.runtime_version,
+            source_type: app.source_type,
+            git_repo_url: app.git_repo_url,
+            git_branch: app.git_branch,
+            start_command: app.start_command,
+            exposed_port: app.exposed_port,
+            status: app.status,
+            created_at: app.created_at,
         }
     }
 }
