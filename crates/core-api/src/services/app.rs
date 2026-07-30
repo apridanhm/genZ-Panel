@@ -17,8 +17,6 @@ pub async fn create_app(
     // Set default values
     let source_type = req.source_type.unwrap_or_else(|| "git".to_string());
     let exposed_port = req.exposed_port.unwrap_or(3000);
-    let cpu_limit = req.cpu_limit.unwrap_or(0.5);
-    let ram_limit_mb = req.ram_limit_mb.unwrap_or(512);
 
     let app = sqlx::query_as::<_, Application>(
         r#"

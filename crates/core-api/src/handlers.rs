@@ -144,31 +144,6 @@ pub async fn create_application(Extension(claims): Extension<Claims>) -> impl In
     ),
     security(("bearer_auth" = []))
 )]
-pub async fn create_app_handler(
-    State(state): State<AppState>,
-    ExtractUser(user): ExtractUser,
-    Json(req): Json<CreateAppRequest>,
-) -> Result<(StatusCode, Json<AppResponse>), AppError> {
-    let app = services::app::create_app(&state.db, user.id, req, &state.publisher).await?;
-    Ok((StatusCode::CREATED, Json(app)))
-}
-
-#[utoipa::path(
-    get,
-    path = "/api/v1/apps",
-    responses(
-        (status = 200, description = "List of applications", body = Vec<AppResponse>),
-        (status = 401, description = "Unauthorized")
-    ),
-    security(("bearer_auth" = []))
-)]
-pub async fn list_apps_handler(
-    State(state): State<AppState>,
-    ExtractUser(user): ExtractUser,
-) -> Result<Json<Vec<AppResponse>>, AppError> {
-    let apps = services::app::list_apps(&state.db, user.id).await?;
-    Ok(Json(apps))
-}
 
 pub async fn create_app_handler(
     State(state): State<crate::AppState>,
