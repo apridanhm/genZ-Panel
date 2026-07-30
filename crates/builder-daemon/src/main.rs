@@ -1,12 +1,16 @@
 use anyhow::Result;
 use async_nats::Client;
+use bollard::container::{Config, CreateContainerOptions, StartContainerOptions};
+use bollard::models::{HostConfig, PortBinding};
+use bollard::Docker;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-use tracing::{info, error, warn};
+use tracing::{info, error};
 use uuid::Uuid;
 use futures::StreamExt;
 
@@ -31,6 +35,7 @@ struct AppDeployTriggered {
 struct BuilderDaemon {
     nats: Client,
     db: PgPool,
+    docker: Docker,
     apps_base_dir: String,
 }
 
@@ -48,29 +53,35 @@ impl BuilderDaemon {
         let db = PgPool::connect(&database_url).await?;
         info!("Connected to database");
 
+        info!("Connecting to Docker");
+        let docker = Docker::connect_with_local_defaults()?;
+        docker.ping().await?;
+        info!("Connected to Docker");
+
         fs::create_dir_all(&apps_base_dir)?;
         info!("Apps base directory ready at {}", apps_base_dir);
 
-        Ok(Self { nats, db, apps_base_dir })
+        Ok(Self { nats, db, docker, apps_base_dir })
     }
 
     async fn handle_deploy(&self, event: AppDeployTriggered) -> Result<()> {
         info!("🚀 Starting deployment for app: {} ({})", event.name, event.runtime);
+
+        let app_id_str = event.app_id.to_string();
+        let image_name = format!("genzpanel-app-{}", app_id_str);
+        let container_name = format!("app-{}", app_id_str);
+        let app_dir = format!("{}/{}", self.apps_base_dir, app_id_str);
+        let source_dir = format!("{}/source", app_dir);
 
         // Update status ke building
         sqlx::query!("UPDATE applications SET status = 'building' WHERE id = $1", event.app_id)
             .execute(&self.db)
             .await?;
 
-        let app_dir = format!("{}/{}", self.apps_base_dir, event.app_id);
-        let source_dir = format!("{}/source", app_dir);
-
-        // 1. Clone Git Repo (kalau source_type = git)
+        // 1. Clone Git Repo
         if event.source_type == "git" {
             if let Some(repo_url) = &event.git_repo_url {
                 info!("📥 Cloning repository: {} (branch: {})", repo_url, event.git_branch.as_deref().unwrap_or("main"));
-                
-                // Hapus folder lama kalau ada
                 let _ = fs::remove_dir_all(&source_dir);
                 fs::create_dir_all(&source_dir)?;
 
@@ -81,9 +92,7 @@ impl BuilderDaemon {
 
                 if !output.status.success() {
                     error!("❌ Git clone failed: {}", String::from_utf8_lossy(&output.stderr));
-                    sqlx::query!("UPDATE applications SET status = 'failed' WHERE id = $1", event.app_id)
-                        .execute(&self.db)
-                        .await?;
+                    self.update_status(event.app_id, "failed").await?;
                     return Err(anyhow::anyhow!("Git clone failed"));
                 }
                 info!("✅ Repository cloned successfully");
@@ -97,19 +106,93 @@ impl BuilderDaemon {
             let dockerfile_content = self.generate_dockerfile(&event);
             fs::write(&dockerfile_path, dockerfile_content)?;
             info!("✅ Dockerfile generated");
-        } else {
-            info!("✅ Using existing Dockerfile from repository");
         }
 
-        // TODO: Step selanjutnya - Docker Build & Run (akan kita tambahkan setelah ini berhasil)
-        info!("⏳ [NEXT STEP] Docker build & container deployment...");
+        // 3. Docker Build
+        info!("🔨 Building Docker image: {}", image_name);
+        let build_output = Command::new("docker")
+            .args(&["build", "-t", &image_name, "."])
+            .current_dir(&source_dir)
+            .output()?;
+
+        if !build_output.status.success() {
+            error!("❌ Docker build failed: {}", String::from_utf8_lossy(&build_output.stderr));
+            self.update_status(event.app_id, "failed").await?;
+            return Err(anyhow::anyhow!("Docker build failed"));
+        }
+        info!("✅ Docker image built successfully");
+
+        // 4. Docker Run dengan Bollard (Resource Limits & Port Mapping)
+        info!("🏃 Starting container: {}", container_name);
         
-        // Untuk sekarang, set status ke running (placeholder)
-        sqlx::query!("UPDATE applications SET status = 'running' WHERE id = $1", event.app_id)
-            .execute(&self.db)
+        // Hapus container lama jika ada
+        let _ = self.docker.remove_container(&container_name, None).await;
+
+        // Setup Port Mapping
+        let host_port = event.exposed_port.to_string();
+        let container_port = format!("{}/tcp", event.exposed_port);
+        
+        let mut port_bindings = HashMap::new();
+        port_bindings.insert(container_port.clone(), Some(vec![PortBinding {
+            host_ip: Some("0.0.0.0".to_string()),
+            host_port: Some(host_port.clone()),
+        }]));
+
+        let mut exposed_ports = HashMap::new();
+        exposed_ports.insert(container_port, HashMap::new());
+
+        // Setup Resource Limits (CPU & RAM)
+        let memory_limit: i64 = 512 * 1024 * 1024; // 512MB
+        let cpu_quota: i64 = 50000; // 50% of 1 CPU
+
+        let config = Config {
+            image: Some(image_name.clone()),
+            cmd: Some(vec!["sh".to_string(), "-c".to_string(), event.start_command.clone()]),
+            exposed_ports: Some(exposed_ports),
+            host_config: Some(HostConfig {
+                port_bindings: Some(port_bindings),
+                memory: Some(memory_limit),
+                cpu_quota: Some(cpu_quota),
+                network_mode: Some("panel-network".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let container = self.docker
+            .create_container(
+                Some(CreateContainerOptions {
+                    name: container_name.clone(),
+                    platform: None,
+                }),
+                config,
+            )
             .await?;
 
-        info!("✅ App {} deployment simulation complete", event.name);
+        self.docker
+            .start_container(&container.id, None::<StartContainerOptions<String>>)
+            .await?;
+
+        info!("✅ Container {} started successfully (ID: {})", container_name, container.id);
+
+        // 5. Update Database
+        sqlx::query!(
+            "UPDATE applications SET status = 'running', container_id = $1 WHERE id = $2",
+            container.id,
+            event.app_id
+        )
+        .execute(&self.db)
+        .await?;
+
+        info!("🎉 App {} deployment COMPLETE! Container is running.", event.name);
+        
+        Ok(())
+    }
+
+    async fn update_status(&self, app_id: Uuid, status: &str) -> Result<()> {
+        sqlx::query!("UPDATE applications SET status = $1 WHERE id = $2", status, app_id)
+            .execute(&self.db)
+            .await?;
         Ok(())
     }
 
@@ -122,7 +205,7 @@ COPY package*.json ./
 RUN npm install
 COPY . .
 EXPOSE {}
-CMD ["{}"]
+CMD {}
 "#,
                 event.runtime_version.as_deref().unwrap_or("18"),
                 event.exposed_port,
@@ -134,15 +217,12 @@ WORKDIR /var/www/html
 COPY . .
 RUN a2enmod rewrite
 EXPOSE 80
-CMD ["apache2-foreground"]
 "#,
                 event.runtime_version.as_deref().unwrap_or("8.3")
             ),
             "go" => format!(
                 r#"FROM golang:{}-alpine AS builder
 WORKDIR /app
-COPY go.* ./
-RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o /main .
 
@@ -154,24 +234,20 @@ CMD ["/main"]
                 event.runtime_version.as_deref().unwrap_or("1.21"),
                 event.exposed_port
             ),
-            _ => {
-                warn!("Unknown runtime {}, using basic alpine", event.runtime);
-                format!(
-                    r#"FROM alpine:latest
+            _ => format!(
+                r#"FROM alpine:latest
 WORKDIR /app
 COPY . .
 EXPOSE {}
 CMD ["sh"]
 "#,
-                    event.exposed_port
-                )
-            }
+                event.exposed_port
+            ),
         }
     }
 
     async fn run(&self) -> Result<()> {
         info!("Builder Daemon started, listening for app.deploy.triggered events...");
-
         let mut sub = self.nats.subscribe("app.deploy.triggered").await?;
 
         while let Some(msg) = sub.next().await {
@@ -184,7 +260,6 @@ CMD ["sh"]
                 Err(e) => error!("Failed to parse app.deploy.triggered event: {}", e),
             }
         }
-
         Ok(())
     }
 }
@@ -198,6 +273,5 @@ async fn main() -> Result<()> {
     info!("Starting Builder Daemon...");
     let daemon = BuilderDaemon::new().await?;
     daemon.run().await?;
-
     Ok(())
 }
