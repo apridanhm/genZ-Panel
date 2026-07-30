@@ -2,6 +2,7 @@ use anyhow::Result;
 use async_nats::Client;
 use bollard::container::{Config, CreateContainerOptions, StartContainerOptions};
 use bollard::models::{HostConfig, PortBinding};
+use bollard::network::{ConnectNetworkOptions, CreateNetworkOptions};
 use bollard::Docker;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -10,7 +11,7 @@ use std::env;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-use tracing::{info, error};
+use tracing::{info, error, warn};
 use uuid::Uuid;
 use futures::StreamExt;
 
@@ -37,6 +38,7 @@ struct BuilderDaemon {
     db: PgPool,
     docker: Docker,
     apps_base_dir: String,
+    network_name: String,
 }
 
 impl BuilderDaemon {
@@ -44,6 +46,7 @@ impl BuilderDaemon {
         let nats_url = env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string());
         let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
         let apps_base_dir = env::var("APPS_BASE_DIR").unwrap_or_else(|_| "/home/genZ-panel/apps/data".to_string());
+        let network_name = env::var("PANEL_NETWORK_NAME").unwrap_or_else(|_| "panel-network".to_string());
 
         info!("Connecting to NATS at {}", nats_url);
         let nats = async_nats::connect(&nats_url).await?;
@@ -61,7 +64,49 @@ impl BuilderDaemon {
         fs::create_dir_all(&apps_base_dir)?;
         info!("Apps base directory ready at {}", apps_base_dir);
 
-        Ok(Self { nats, db, docker, apps_base_dir })
+        // 🛡️ SELF-PROVISIONING: Pastikan network ada (dengan type annotation ::<String>)
+        info!("🛡️ Ensuring Docker network '{}' exists...", network_name);
+        match docker.inspect_network::<String>(&network_name, None).await {
+            Ok(_) => info!("✅ Network '{}' already exists.", network_name),
+            Err(_) => {
+                info!("⚠️ Network '{}' not found. Creating it automatically...", network_name);
+                docker.create_network(CreateNetworkOptions {
+                    name: network_name.clone(),
+                    check_duplicate: true,
+                    ..Default::default()
+                }).await?;
+                info!("✅ Network '{}' created successfully!", network_name);
+            }
+        }
+
+        // 🛡️ SELF-HEALING: Pastikan panel-nginx terhubung ke network ini
+        let nginx_container = "panel-nginx";
+        match docker.inspect_container(nginx_container, None).await {
+            Ok(container_info) => {
+                let mut is_connected = false;
+                if let Some(network_settings) = container_info.network_settings {
+                    if let Some(networks) = network_settings.networks {
+                        if networks.contains_key(&network_name) {
+                            is_connected = true;
+                        }
+                    }
+                }
+
+                if !is_connected {
+                    info!("🔗 Connecting '{}' to network '{}'...", nginx_container, network_name);
+                    docker.connect_network(&network_name, ConnectNetworkOptions {
+                        container: nginx_container.to_string(),
+                        ..Default::default()
+                    }).await?;
+                    info!("✅ '{}' successfully connected to '{}'!", nginx_container, network_name);
+                } else {
+                    info!("✅ '{}' is already connected to '{}'.", nginx_container, network_name);
+                }
+            }
+            Err(_) => warn!("⚠️ Container '{}' not found. Make sure it's running.", nginx_container),
+        }
+
+        Ok(Self { nats, db, docker, apps_base_dir, network_name })
     }
 
     async fn handle_deploy(&self, event: AppDeployTriggered) -> Result<()> {
@@ -73,12 +118,10 @@ impl BuilderDaemon {
         let app_dir = format!("{}/{}", self.apps_base_dir, app_id_str);
         let source_dir = format!("{}/source", app_dir);
 
-        // Update status ke building
         sqlx::query!("UPDATE applications SET status = 'building' WHERE id = $1", event.app_id)
             .execute(&self.db)
             .await?;
 
-        // 1. Clone Git Repo
         if event.source_type == "git" {
             if let Some(repo_url) = &event.git_repo_url {
                 info!("📥 Cloning repository: {} (branch: {})", repo_url, event.git_branch.as_deref().unwrap_or("main"));
@@ -99,7 +142,6 @@ impl BuilderDaemon {
             }
         }
 
-        // 2. Generate Dockerfile kalau belum ada
         let dockerfile_path = format!("{}/Dockerfile", source_dir);
         if !Path::new(&dockerfile_path).exists() {
             info!("📝 Generating Dockerfile for runtime: {}", event.runtime);
@@ -108,7 +150,6 @@ impl BuilderDaemon {
             info!("✅ Dockerfile generated");
         }
 
-        // 3. Docker Build
         info!("🔨 Building Docker image: {}", image_name);
         let build_output = Command::new("docker")
             .args(&["build", "-t", &image_name, "."])
@@ -122,13 +163,9 @@ impl BuilderDaemon {
         }
         info!("✅ Docker image built successfully");
 
-        // 4. Docker Run dengan Bollard (Resource Limits & Port Mapping)
         info!("🏃 Starting container: {}", container_name);
-        
-        // Hapus container lama jika ada
         let _ = self.docker.remove_container(&container_name, None).await;
 
-        // Setup Port Mapping
         let host_port = event.exposed_port.to_string();
         let container_port = format!("{}/tcp", event.exposed_port);
         
@@ -141,9 +178,8 @@ impl BuilderDaemon {
         let mut exposed_ports = HashMap::new();
         exposed_ports.insert(container_port, HashMap::new());
 
-        // Setup Resource Limits (CPU & RAM)
-        let memory_limit: i64 = 512 * 1024 * 1024; // 512MB
-        let cpu_quota: i64 = 50000; // 50% of 1 CPU
+        let memory_limit: i64 = 512 * 1024 * 1024;
+        let cpu_quota: i64 = 50000;
 
         let config = Config {
             image: Some(image_name.clone()),
@@ -153,7 +189,7 @@ impl BuilderDaemon {
                 port_bindings: Some(port_bindings),
                 memory: Some(memory_limit),
                 cpu_quota: Some(cpu_quota),
-                network_mode: Some("panel-network".to_string()),
+                network_mode: Some(self.network_name.clone()),
                 ..Default::default()
             }),
             ..Default::default()
@@ -175,7 +211,6 @@ impl BuilderDaemon {
 
         info!("✅ Container {} started successfully (ID: {})", container_name, container.id);
 
-        // 5. Update Database
         sqlx::query!(
             "UPDATE applications SET status = 'running', container_id = $1 WHERE id = $2",
             container.id,
@@ -185,7 +220,6 @@ impl BuilderDaemon {
         .await?;
 
         info!("🎉 App {} deployment COMPLETE! Container is running.", event.name);
-        
         Ok(())
     }
 

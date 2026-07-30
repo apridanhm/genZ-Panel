@@ -28,4 +28,16 @@ curl -X POST http://localhost:8000/api/v1/domains \
   -d '{"domain_name": "perfect-test.genzpanel.local", "ssl_enabled": true}'
 
 
-  
+  terminal 4
+  # 1. Restart Core API
+pkill -f "target/debug/core-api"
+cd /home/genZ-panel
+cargo watch --package core-api -x 'run --bin core-api' &
+
+# 2. Build & Run Builder Daemon
+cargo build --bin builder-daemon
+
+NATS_URL=nats://localhost:4222 \
+DATABASE_URL=postgres://panel_dev:dev_password_123@localhost:5432/panel_dev \
+APPS_BASE_DIR=/home/genZ-panel/apps/data \
+cargo run --bin builder-daemon
