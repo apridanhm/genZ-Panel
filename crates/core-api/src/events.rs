@@ -46,6 +46,14 @@ pub struct AppDeployTriggered {
     pub exposed_port: i32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppDeployed {
+    pub app_id: Uuid,
+    pub domain_id: Uuid,
+    pub container_name: String,
+    pub exposed_port: i32,
+}
+
 #[derive(Clone)]
 pub struct EventPublisher {
     pub client: Client,
@@ -81,6 +89,13 @@ impl EventPublisher {
         let payload = serde_json::to_string(&event)?;
         info!("Publishing event to app.deploy.triggered: {}", payload);
         self.client.publish("app.deploy.triggered", payload.into()).await?;
+        Ok(())
+    }
+
+    pub async fn publish_app_deployed(&self, event: AppDeployed) -> Result<(), anyhow::Error> {
+        let payload = serde_json::to_string(&event)?;
+        info!("Publishing event to app.deployed: {}", payload);
+        self.client.publish("app.deployed", payload.into()).await?;
         Ok(())
     }
 }

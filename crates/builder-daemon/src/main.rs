@@ -32,6 +32,14 @@ struct AppDeployTriggered {
     exposed_port: i32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AppDeployed {
+    app_id: Uuid,
+    domain_id: Uuid,
+    container_name: String,
+    exposed_port: i32,
+}
+
 #[derive(Clone)]
 struct BuilderDaemon {
     nats: Client,
@@ -64,7 +72,6 @@ impl BuilderDaemon {
         fs::create_dir_all(&apps_base_dir)?;
         info!("Apps base directory ready at {}", apps_base_dir);
 
-        // 🛡️ SELF-PROVISIONING: Pastikan network ada (dengan type annotation ::<String>)
         info!("🛡️ Ensuring Docker network '{}' exists...", network_name);
         match docker.inspect_network::<String>(&network_name, None).await {
             Ok(_) => info!("✅ Network '{}' already exists.", network_name),
@@ -79,7 +86,6 @@ impl BuilderDaemon {
             }
         }
 
-        // 🛡️ SELF-HEALING: Pastikan panel-nginx terhubung ke network ini
         let nginx_container = "panel-nginx";
         match docker.inspect_container(nginx_container, None).await {
             Ok(container_info) => {
@@ -218,6 +224,17 @@ impl BuilderDaemon {
         )
         .execute(&self.db)
         .await?;
+
+        // 📡 PUBLISH EVENT: Beri tahu Web Daemon untuk update Nginx!
+        let deployed_event = AppDeployed {
+            app_id: event.app_id,
+            domain_id: event.domain_id,
+            container_name: container_name.clone(),
+            exposed_port: event.exposed_port,
+        };
+        let payload = serde_json::to_string(&deployed_event).unwrap_or_default();
+        info!("📡 Publishing event to app.deployed: {}", payload);
+        let _ = self.nats.publish("app.deployed", payload.into()).await;
 
         info!("🎉 App {} deployment COMPLETE! Container is running.", event.name);
         Ok(())
