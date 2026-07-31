@@ -24,3 +24,10 @@ docker-compose.override.yml
 .DS_Store
 Thumbs.db
 apps/data/
+apps/nginx/conf.d/
+apps/nginx/acme-challenge/
+# Generated SSL Certificates (SENSITIVE!)
+apps/ssl/
+
+
+Cargo.lock
