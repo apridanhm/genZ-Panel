@@ -163,3 +163,30 @@ pub async fn list_apps_handler(
     let apps = app::list_apps(&state.db, user_id).await?;
     Ok(Json(apps))
 }
+
+#[utoipa::path(
+    delete,
+    path = "/api/v1/apps/{id}",
+    params(
+        ("id" = Uuid, Path, description = "Application ID")
+    ),
+    responses(
+        (status = 200, description = "Application deleted successfully"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "App not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn delete_app_handler(
+    State(state): State<crate::AppState>,
+    Extension(claims): Extension<crate::middleware::auth::Claims>,
+    Path(app_id): Path<uuid::Uuid>,
+) -> Result<(StatusCode, Json<serde_json::Value>), crate::error::AppError> {
+    use crate::services::app::delete_app;
+    
+    let user_id = uuid::Uuid::parse_str(&claims.sub).map_err(|_| crate::error::AppError::Unauthorized)?;
+    
+    delete_app(&state.db, &state.docker, &state.nats, user_id, app_id).await?;
+    
+    Ok((StatusCode::OK, Json(serde_json::json!({ "message": "Application deleted successfully" }))))
+}

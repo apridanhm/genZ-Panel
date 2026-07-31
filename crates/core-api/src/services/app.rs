@@ -86,3 +86,56 @@ pub async fn list_apps(
 
     Ok(apps.into_iter().map(AppResponse::from).collect())
 }
+
+use bollard::Docker;
+use async_nats::Client;
+use std::fs;
+
+pub async fn delete_app(
+    db: &PgPool,
+    docker: &Docker,
+    nats: &Client,
+    user_id: Uuid,
+    app_id: Uuid,
+) -> Result<(), AppError> {
+    info!("Deleting application {} for user {}", app_id, user_id);
+
+    // 1. Ambil data app dulu
+    let app = sqlx::query_as::<_, Application>(
+        "SELECT * FROM applications WHERE id = $1 AND user_id = $2"
+    )
+    .bind(app_id)
+    .bind(user_id)
+    .fetch_optional(db)
+    .await?;
+
+    if let Some(app_data) = app {
+        // 2. Stop & Hapus Container via Docker API
+        if let Some(container_id) = &app_data.container_id {
+            info!("Removing Docker container: {}", container_id);
+            let _ = docker.remove_container(container_id, Some(bollard::container::RemoveContainerOptions {
+                force: true,
+                ..Default::default()
+            })).await;
+        }
+
+        // 3. Hapus file source code di disk
+        let app_dir = format!("/home/genZ-panel/apps/data/{}", app_id);
+        if std::path::Path::new(&app_dir).exists() {
+            info!("Removing app directory: {}", app_dir);
+            let _ = fs::remove_dir_all(&app_dir);
+        }
+
+        // 4. Publish event agar Web Daemon menghapus config Nginx (Opsional, tapi bagus untuk arsitektur)
+        // ... (bisa ditambahkan nanti)
+
+        // 5. Hapus dari Database
+        sqlx::query!("DELETE FROM applications WHERE id = $1", app_id)
+            .execute(db)
+            .await?;
+
+        info!("Application {} deleted successfully", app_id);
+    }
+
+    Ok(())
+}

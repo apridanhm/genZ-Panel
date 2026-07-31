@@ -79,6 +79,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/users/me", get(handlers::get_current_user))
         .route("/api/v1/domains", post(handlers::create_domain))
         .route("/api/v1/apps", post(handlers::create_app_handler).get(handlers::list_apps_handler))
+        .route("/api/v1/apps/:id", delete(handlers::delete_app_handler))
         .route("/api/v1/domains", get(handlers::list_domains))
         .route("/api/v1/domains/:id", get(handlers::get_domain))
         .route("/api/v1/domains/:id", put(handlers::update_domain))

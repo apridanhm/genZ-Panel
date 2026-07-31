@@ -172,14 +172,13 @@ impl BuilderDaemon {
         info!("🏃 Starting container: {} on port {}", container_name, event.exposed_port);
         let _ = self.docker.remove_container(&container_name, None).await;
 
-        // 🛡️ HORMATI INPUT USER: Gunakan port yang diminta user untuk host binding
         let container_port = format!("{}/tcp", event.exposed_port);
         let host_port_str = event.exposed_port.to_string();
         
         let mut port_bindings = HashMap::new();
         port_bindings.insert(container_port.clone(), Some(vec![PortBinding {
             host_ip: Some("0.0.0.0".to_string()),
-            host_port: Some(host_port_str.clone()), // <-- Menggunakan port pilihan user
+            host_port: Some(host_port_str.clone()),
         }]));
 
         let mut exposed_ports = HashMap::new();
@@ -188,9 +187,13 @@ impl BuilderDaemon {
         let memory_limit: i64 = 512 * 1024 * 1024;
         let cpu_quota: i64 = 50000;
 
+        // 🛡️ FIX: Inject environment variable PORT agar aplikasi Node.js listening di port yang diminta user
+        let env_vars = vec![format!("PORT={}", event.exposed_port)];
+
         let config = Config {
             image: Some(image_name.clone()),
             cmd: Some(vec!["sh".to_string(), "-c".to_string(), event.start_command.clone()]),
+            env: Some(env_vars), // <-- INI KUNCINYA!
             exposed_ports: Some(exposed_ports),
             host_config: Some(HostConfig {
                 port_bindings: Some(port_bindings),
@@ -215,7 +218,7 @@ impl BuilderDaemon {
                 if err_msg.contains("port is already allocated") {
                     error!("❌ Port {} sudah digunakan oleh aplikasi lain di host ini.", event.exposed_port);
                     self.update_status(event.app_id, "failed").await?;
-                    return Err(anyhow::anyhow!("Port {} is already allocated on the host. Please choose a different exposed_port.", event.exposed_port));
+                    return Err(anyhow::anyhow!("Port {} is already allocated on the host.", event.exposed_port));
                 }
                 error!("❌ Failed to create container: {}", e);
                 self.update_status(event.app_id, "failed").await?;
@@ -237,7 +240,6 @@ impl BuilderDaemon {
         .execute(&self.db)
         .await?;
 
-        // 📡 PUBLISH EVENT: Beri tahu Web Daemon untuk update Nginx!
         let deployed_event = AppDeployed {
             app_id: event.app_id,
             domain_id: event.domain_id,
