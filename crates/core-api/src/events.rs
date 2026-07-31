@@ -54,6 +54,12 @@ pub struct AppDeployed {
     pub exposed_port: i32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppDeleted {
+    pub app_id: Uuid,
+    pub domain_id: Uuid,
+}
+
 #[derive(Clone)]
 pub struct EventPublisher {
     pub client: Client,
@@ -96,6 +102,13 @@ impl EventPublisher {
         let payload = serde_json::to_string(&event)?;
         info!("Publishing event to app.deployed: {}", payload);
         self.client.publish("app.deployed", payload.into()).await?;
+        Ok(())
+    }
+
+    pub async fn publish_app_deleted(&self, event: AppDeleted) -> Result<(), anyhow::Error> {
+        let payload = serde_json::to_string(&event)?;
+        info!("Publishing event to app.deleted: {}", payload);
+        self.client.publish("app.deleted", payload.into()).await?;
         Ok(())
     }
 }

@@ -186,7 +186,7 @@ pub async fn delete_app_handler(
     
     let user_id = uuid::Uuid::parse_str(&claims.sub).map_err(|_| crate::error::AppError::Unauthorized)?;
     
-    delete_app(&state.db, &state.docker, &state.nats, user_id, app_id).await?;
+    delete_app(&state.db, &state.docker, &state.event_publisher, user_id, app_id).await?;
     
     Ok((StatusCode::OK, Json(serde_json::json!({ "message": "Application deleted successfully" }))))
 }

@@ -1,9 +1,11 @@
 use sqlx::PgPool;
 use tracing::info;
 use uuid::Uuid;
+use bollard::Docker;
+use std::fs;
 
 use crate::error::AppError;
-use crate::events::{AppDeployTriggered, EventPublisher};
+use crate::events::{AppDeployTriggered, AppDeleted, EventPublisher};
 use crate::models::{Application, AppResponse, CreateAppRequest};
 
 pub async fn create_app(
@@ -14,7 +16,6 @@ pub async fn create_app(
 ) -> Result<AppResponse, AppError> {
     info!("Creating application {} for user {}", req.name, user_id);
 
-    // Set default values
     let source_type = req.source_type.unwrap_or_else(|| "git".to_string());
     let exposed_port = req.exposed_port.unwrap_or(3000);
 
@@ -49,7 +50,6 @@ pub async fn create_app(
 
     info!("Application created in DB: {}", app.id);
 
-    // Publish event untuk trigger Builder Daemon
     if let Err(e) = publisher.publish_app_deploy_triggered(AppDeployTriggered {
         app_id: app.id,
         domain_id: app.domain_id.unwrap_or_default(),
@@ -87,20 +87,15 @@ pub async fn list_apps(
     Ok(apps.into_iter().map(AppResponse::from).collect())
 }
 
-use bollard::Docker;
-use async_nats::Client;
-use std::fs;
-
 pub async fn delete_app(
     db: &PgPool,
     docker: &Docker,
-    nats: &Client,
+    publisher: &EventPublisher,
     user_id: Uuid,
     app_id: Uuid,
 ) -> Result<(), AppError> {
     info!("Deleting application {} for user {}", app_id, user_id);
 
-    // 1. Ambil data app dulu
     let app = sqlx::query_as::<_, Application>(
         "SELECT * FROM applications WHERE id = $1 AND user_id = $2"
     )
@@ -110,7 +105,6 @@ pub async fn delete_app(
     .await?;
 
     if let Some(app_data) = app {
-        // 2. Stop & Hapus Container via Docker API
         if let Some(container_id) = &app_data.container_id {
             info!("Removing Docker container: {}", container_id);
             let _ = docker.remove_container(container_id, Some(bollard::container::RemoveContainerOptions {
@@ -119,17 +113,18 @@ pub async fn delete_app(
             })).await;
         }
 
-        // 3. Hapus file source code di disk
         let app_dir = format!("/home/genZ-panel/apps/data/{}", app_id);
         if std::path::Path::new(&app_dir).exists() {
             info!("Removing app directory: {}", app_dir);
             let _ = fs::remove_dir_all(&app_dir);
         }
 
-        // 4. Publish event agar Web Daemon menghapus config Nginx (Opsional, tapi bagus untuk arsitektur)
-        // ... (bisa ditambahkan nanti)
+        let delete_event = AppDeleted {
+            app_id,
+            domain_id: app_data.domain_id.unwrap_or_default(),
+        };
+        let _ = publisher.publish_app_deleted(delete_event).await;
 
-        // 5. Hapus dari Database
         sqlx::query!("DELETE FROM applications WHERE id = $1", app_id)
             .execute(db)
             .await?;
