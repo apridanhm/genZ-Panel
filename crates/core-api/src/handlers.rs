@@ -1,7 +1,7 @@
 use axum::{
     extract::{Extension, Path, State},
     http::StatusCode,
-    response::IntoResponse,
+    response::{IntoResponse, sse::{Event, Sse}},
     Json,
 };
 use serde::Deserialize;
@@ -9,6 +9,8 @@ use serde_json::json;
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 use validator::Validate;
+use std::convert::Infallible;
+//use futures::stream::StreamExt;
 
 use crate::error::AppError;
 use crate::middleware::auth::Claims;
@@ -126,7 +128,7 @@ pub async fn delete_domain(State(state): State<AppState>, Extension(claims): Ext
 }
 
 // ==========================================
-// APPLICATION HANDLERS (CLEAN & CORRECT)
+// APPLICATION HANDLERS
 // ==========================================
 
 #[utoipa::path(
@@ -189,4 +191,29 @@ pub async fn delete_app_handler(
     let user_id = Uuid::parse_str(&claims.sub).map_err(|_| AppError::Unauthorized)?;
     app::delete_app(&state.db, &state.docker, &state.event_publisher, user_id, app_id).await?;
     Ok((StatusCode::OK, Json(serde_json::json!({ "message": "Application deleted successfully" }))))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/apps/{id}/logs",
+    params(
+        ("id" = String, Path, description = "Application ID", example = "550e8400-e29b-41d4-a716-446655440000")
+    ),
+    responses(
+        (status = 200, description = "Server-Sent Events stream of container logs", content_type = "text/event-stream"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "App not found or not deployed")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn stream_app_logs_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(app_id): Path<Uuid>,
+) -> Result<
+    Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, 
+    AppError
+> {
+    let user_id = Uuid::parse_str(&claims.sub).map_err(|_| AppError::Unauthorized)?;
+    app::stream_app_logs(&state.db, &state.docker, user_id, app_id).await
 }

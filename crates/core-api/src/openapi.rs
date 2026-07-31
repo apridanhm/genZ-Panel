@@ -16,6 +16,7 @@ use utoipa::OpenApi;
         crate::handlers::create_app_handler,
         crate::handlers::list_apps_handler,
         crate::handlers::delete_app_handler,
+        crate::handlers::stream_app_logs_handler,
     ),
     components(
         schemas(

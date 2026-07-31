@@ -492,6 +492,7 @@ dependencies = [
  "bollard",
  "chrono",
  "dotenvy",
+ "futures",
  "jsonwebtoken",
  "serde",
  "serde_json",

@@ -84,6 +84,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/domains/:id", delete(handlers::delete_domain))
         .route("/api/v1/apps", get(handlers::list_apps_handler).post(handlers::create_app_handler))
         .route("/api/v1/apps/:id", delete(handlers::delete_app_handler))
+        .route("/api/v1/apps/:id/logs", get(handlers::stream_app_logs_handler))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::auth::auth_middleware,

@@ -3,6 +3,10 @@ use tracing::info;
 use uuid::Uuid;
 use bollard::Docker;
 use std::fs;
+use bollard::container::LogsOptions;
+use futures::stream::StreamExt;
+use axum::response::sse::{Event, Sse, KeepAlive};
+use std::convert::Infallible;
 
 use crate::error::AppError;
 use crate::events::{AppDeployTriggered, AppDeleted, EventPublisher};
@@ -133,4 +137,53 @@ pub async fn delete_app(
     }
 
     Ok(())
+}
+
+pub async fn stream_app_logs(
+    db: &PgPool,
+    docker: &Docker,
+    user_id: Uuid,
+    app_id: Uuid,
+) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, AppError> {
+    info!("Streaming logs for app {} by user {}", app_id, user_id);
+
+    let app = sqlx::query_as::<_, Application>(
+        "SELECT * FROM applications WHERE id = $1 AND user_id = $2"
+    )
+    .bind(app_id)
+    .bind(user_id)
+    .fetch_optional(db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    let container_id = app.container_id.ok_or_else(|| {
+        AppError::Internal // Menggunakan Internal karena BadRequest tidak ada di enum kamu
+    })?;
+
+    let options = LogsOptions::<String> {
+        follow: true,
+        stdout: true,
+        stderr: true,
+        tail: "100".to_string(),
+        timestamps: false,
+        ..Default::default()
+    };
+
+    let log_stream = docker.logs::<String>(&container_id, Some(options));
+
+    let sse_stream = log_stream.map(move |log_result| {
+        let data = match log_result {
+            Ok(bollard::container::LogOutput::StdErr { message }) => {
+                format!("[ERR] {}", String::from_utf8_lossy(&message).trim_end())
+            }
+            Ok(bollard::container::LogOutput::StdOut { message }) => {
+                format!("[OUT] {}", String::from_utf8_lossy(&message).trim_end())
+            }
+            Ok(_) => return Ok(Event::default()),
+            Err(e) => format!("[SYSTEM ERROR] {}", e),
+        };
+        Ok::<_, Infallible>(Event::default().data(data))
+    });
+
+    Ok(Sse::new(sse_stream).keep_alive(KeepAlive::new()))
 }
