@@ -217,3 +217,30 @@ pub async fn stream_app_logs_handler(
     let user_id = Uuid::parse_str(&claims.sub).map_err(|_| AppError::Unauthorized)?;
     app::stream_app_logs(&state.db, &state.docker, user_id, app_id).await
 }
+
+use axum::extract::Multipart;
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/apps/{id}/deploy-zip",
+    params(
+        ("id" = String, Path, description = "Application ID", example = "550e8400-e29b-41d4-a716-446655440000")
+    ),
+    responses(
+        (status = 202, description = "ZIP uploaded and deployment triggered"),
+        (status = 400, description = "Invalid file or missing file"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "App not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn deploy_zip_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(app_id): Path<Uuid>,
+    mut multipart: Multipart,
+) -> Result<(StatusCode, Json<serde_json::Value>), AppError> {
+    let user_id = Uuid::parse_str(&claims.sub).map_err(|_| AppError::Unauthorized)?;
+    app::deploy_zip(&state.db, &state.event_publisher, user_id, app_id, multipart).await?;
+    Ok((StatusCode::ACCEPTED, Json(serde_json::json!({ "message": "ZIP uploaded, deployment triggered" }))))
+}

@@ -12,6 +12,10 @@ use crate::error::AppError;
 use crate::events::{AppDeployTriggered, AppDeleted, EventPublisher};
 use crate::models::{Application, AppResponse, CreateAppRequest};
 
+use axum::extract::Multipart;
+use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
+
 pub async fn create_app(
     db: &PgPool,
     user_id: Uuid,
@@ -186,4 +190,76 @@ pub async fn stream_app_logs(
     });
 
     Ok(Sse::new(sse_stream).keep_alive(KeepAlive::new()))
+}
+
+pub async fn deploy_zip(
+    db: &PgPool,
+    publisher: &EventPublisher,
+    user_id: Uuid,
+    app_id: Uuid,
+    mut multipart: Multipart,
+) -> Result<(), AppError> {
+    info!("Processing ZIP deployment for app {} by user {}", app_id, user_id);
+
+    let app = sqlx::query_as::<_, Application>(
+        "SELECT * FROM applications WHERE id = $1 AND user_id = $2"
+    )
+    .bind(app_id)
+    .bind(user_id)
+    .fetch_optional(db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    let mut zip_file_path = String::new();
+
+    while let Some(field) = multipart.next_field().await.map_err(|_| AppError::Internal)? {
+        let name = field.name().unwrap_or("").to_string();
+        if name == "file" {
+            let file_name = field.file_name().unwrap_or("source.zip").to_string();
+            let save_dir = format!("/home/genZ-panel/apps/data/{}", app_id);
+            tokio::fs::create_dir_all(&save_dir).await.map_err(|_| AppError::Internal)?;
+            
+            zip_file_path = format!("{}/{}", save_dir, file_name);
+            let mut file = File::create(&zip_file_path).await.map_err(|_| AppError::Internal)?;
+            
+            let mut stream = field;
+            while let Some(chunk) = stream.chunk().await.map_err(|_| AppError::Internal)? {
+                file.write_all(&chunk).await.map_err(|_| AppError::Internal)?;
+            }
+            break;
+        }
+    }
+
+    if zip_file_path.is_empty() {
+        return Err(AppError::Validation("No file field named 'file' found in request".to_string()));
+    }
+
+    // Update DB status
+    sqlx::query!(
+        "UPDATE applications SET status = 'pending', source_type = 'zip', zip_file_path = $1 WHERE id = $2",
+        zip_file_path,
+        app_id
+    )
+    .execute(db)
+    .await?;
+
+    // Publish event ke Builder Daemon
+    publisher.publish_app_deploy_triggered(AppDeployTriggered {
+        app_id: app.id,
+        domain_id: app.domain_id.unwrap_or_default(),
+        user_id,
+        name: app.name.clone(),
+        runtime: app.runtime.clone(),
+        runtime_version: app.runtime_version.clone(),
+        source_type: "zip".to_string(),
+        git_repo_url: None,
+        git_branch: None,
+        zip_file_path: Some(zip_file_path.clone()),
+        build_command: app.build_command.clone(),
+        start_command: app.start_command.clone().unwrap_or_default(),
+        exposed_port: app.exposed_port.unwrap_or(3000),
+    }).await.map_err(|_| AppError::Internal)?;
+
+    info!("ZIP uploaded and deployment triggered for app {}", app_id);
+    Ok(())
 }

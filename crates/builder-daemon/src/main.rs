@@ -114,8 +114,8 @@ impl BuilderDaemon {
 
         Ok(Self { nats, db, docker, apps_base_dir, network_name })
     }
-
-    async fn handle_deploy(&self, event: AppDeployTriggered) -> Result<()> {
+/////////// async fn handle_deploy(&self, event: AppDeployTriggered) -> Result<()> { ///
+        async fn handle_deploy(&self, event: AppDeployTriggered) -> Result<()> {
         info!("🚀 Starting deployment for app: {} ({})", event.name, event.runtime);
 
         let app_id_str = event.app_id.to_string();
@@ -128,6 +128,7 @@ impl BuilderDaemon {
             .execute(&self.db)
             .await?;
 
+        // 1. Handle Source (Git atau ZIP)
         if event.source_type == "git" {
             if let Some(repo_url) = &event.git_repo_url {
                 info!("📥 Cloning repository: {} (branch: {})", repo_url, event.git_branch.as_deref().unwrap_or("main"));
@@ -146,8 +147,41 @@ impl BuilderDaemon {
                 }
                 info!("✅ Repository cloned successfully");
             }
+        } else if event.source_type == "zip" {
+            if let Some(zip_path) = &event.zip_file_path {
+                info!("📦 Extracting ZIP file: {}", zip_path);
+                fs::create_dir_all(&source_dir)?;
+                
+                // Cek apakah command 'unzip' tersedia
+                let unzip_check = Command::new("unzip").arg("-v").output();
+                if unzip_check.is_err() || !unzip_check.unwrap().status.success() {
+                    error!("❌ 'unzip' command not found on host system.");
+                    self.update_status(event.app_id, "failed").await?;
+                    return Err(anyhow::anyhow!("Dependency missing: 'unzip' is not installed."));
+                }
+
+                let output = Command::new("unzip")
+                    .args(&["-o", zip_path, "-d", &source_dir])
+                    .output()?;
+                
+                if !output.status.success() {
+                    error!("❌ ZIP extraction failed: {}", String::from_utf8_lossy(&output.stderr));
+                    self.update_status(event.app_id, "failed").await?;
+                    return Err(anyhow::anyhow!("ZIP extraction failed"));
+                }
+                info!("✅ ZIP extracted successfully");
+            } else {
+                error!("❌ ZIP source type provided but no zip_file_path");
+                self.update_status(event.app_id, "failed").await?;
+                return Err(anyhow::anyhow!("Missing zip_file_path"));
+            }
+        } else {
+            error!("❌ Unsupported source type: {}", event.source_type);
+            self.update_status(event.app_id, "failed").await?;
+            return Err(anyhow::anyhow!("Unsupported source type"));
         }
 
+        // 2. Generate Dockerfile
         let dockerfile_path = format!("{}/Dockerfile", source_dir);
         if !Path::new(&dockerfile_path).exists() {
             info!("📝 Generating Dockerfile for runtime: {}", event.runtime);
@@ -156,6 +190,7 @@ impl BuilderDaemon {
             info!("✅ Dockerfile generated");
         }
 
+        // 3. Build Docker Image
         info!("🔨 Building Docker image: {}", image_name);
         let build_output = Command::new("docker")
             .args(&["build", "-t", &image_name, "."])
@@ -169,8 +204,14 @@ impl BuilderDaemon {
         }
         info!("✅ Docker image built successfully");
 
+        // 4. Start Container (FORCE REMOVE old one first!)
         info!("🏃 Starting container: {} on port {}", container_name, event.exposed_port);
-        let _ = self.docker.remove_container(&container_name, None).await;
+        
+        // Hapus container lama secara PAKSA agar tidak terjadi 409 Conflict
+        let _ = self.docker.remove_container(&container_name, Some(bollard::container::RemoveContainerOptions {
+            force: true,
+            ..Default::default()
+        })).await;
 
         let container_port = format!("{}/tcp", event.exposed_port);
         let host_port_str = event.exposed_port.to_string();
@@ -186,14 +227,12 @@ impl BuilderDaemon {
 
         let memory_limit: i64 = 512 * 1024 * 1024;
         let cpu_quota: i64 = 50000;
-
-        // 🛡️ FIX: Inject environment variable PORT agar aplikasi Node.js listening di port yang diminta user
         let env_vars = vec![format!("PORT={}", event.exposed_port)];
 
         let config = Config {
             image: Some(image_name.clone()),
             cmd: Some(vec!["sh".to_string(), "-c".to_string(), event.start_command.clone()]),
-            env: Some(env_vars), // <-- INI KUNCINYA!
+            env: Some(env_vars),
             exposed_ports: Some(exposed_ports),
             host_config: Some(HostConfig {
                 port_bindings: Some(port_bindings),
@@ -205,31 +244,15 @@ impl BuilderDaemon {
             ..Default::default()
         };
 
-        let container = match self.docker.create_container(
+        let container = self.docker.create_container(
             Some(CreateContainerOptions {
                 name: container_name.clone(),
                 platform: None,
             }),
             config,
-        ).await {
-            Ok(c) => c,
-            Err(e) => {
-                let err_msg = e.to_string();
-                if err_msg.contains("port is already allocated") {
-                    error!("❌ Port {} sudah digunakan oleh aplikasi lain di host ini.", event.exposed_port);
-                    self.update_status(event.app_id, "failed").await?;
-                    return Err(anyhow::anyhow!("Port {} is already allocated on the host.", event.exposed_port));
-                }
-                error!("❌ Failed to create container: {}", e);
-                self.update_status(event.app_id, "failed").await?;
-                return Err(anyhow::anyhow!("Failed to create container: {}", e));
-            }
-        };
+        ).await?;
 
-        self.docker
-            .start_container(&container.id, None::<StartContainerOptions<String>>)
-            .await?;
-
+        self.docker.start_container(&container.id, None::<StartContainerOptions<String>>).await?;
         info!("✅ Container {} started successfully (ID: {})", container_name, container.id);
 
         sqlx::query!(
@@ -253,7 +276,7 @@ impl BuilderDaemon {
         info!("🎉 App {} deployment COMPLETE! Container is running.", event.name);
         Ok(())
     }
-
+/////////////////////// end of async fn handle_deploy(&self, event: AppDeployTriggered) -> Result<()> { ////
     async fn update_status(&self, app_id: Uuid, status: &str) -> Result<()> {
         sqlx::query!("UPDATE applications SET status = $1 WHERE id = $2", status, app_id)
             .execute(&self.db)
