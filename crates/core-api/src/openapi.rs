@@ -13,6 +13,9 @@ use utoipa::OpenApi;
         crate::handlers::get_domain,
         crate::handlers::update_domain,
         crate::handlers::delete_domain,
+        crate::handlers::create_app_handler,
+        crate::handlers::list_apps_handler,
+        crate::handlers::delete_app_handler,
     ),
     components(
         schemas(
@@ -23,6 +26,8 @@ use utoipa::OpenApi;
             crate::models::CreateDomainRequest,
             crate::models::UpdateDomainRequest,
             crate::models::DomainResponse,
+            crate::models::CreateAppRequest,
+            crate::models::AppResponse,
             crate::handlers::RootResponse,
             crate::handlers::HealthResponse,
             crate::handlers::UserMeResponse,

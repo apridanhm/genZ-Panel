@@ -125,13 +125,9 @@ pub async fn delete_domain(State(state): State<AppState>, Extension(claims): Ext
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub async fn list_applications(Extension(claims): Extension<Claims>) -> impl IntoResponse {
-    (StatusCode::OK, Json(json!({"message": "List apps endpoint ready", "user_id": claims.sub})))
-}
-
-pub async fn create_application(Extension(claims): Extension<Claims>) -> impl IntoResponse {
-    (StatusCode::OK, Json(json!({"message": "Create app endpoint ready", "user_id": claims.sub})))
-}
+// ==========================================
+// APPLICATION HANDLERS (CLEAN & CORRECT)
+// ==========================================
 
 #[utoipa::path(
     post,
@@ -144,9 +140,8 @@ pub async fn create_application(Extension(claims): Extension<Claims>) -> impl In
     ),
     security(("bearer_auth" = []))
 )]
-
 pub async fn create_app_handler(
-    State(state): State<crate::AppState>,
+    State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
     Json(req): Json<CreateAppRequest>,
 ) -> Result<(StatusCode, Json<AppResponse>), AppError> {
@@ -155,8 +150,17 @@ pub async fn create_app_handler(
     Ok((StatusCode::CREATED, Json(app)))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/apps",
+    responses(
+        (status = 200, description = "List of applications", body = Vec<AppResponse>),
+        (status = 401, description = "Unauthorized")
+    ),
+    security(("bearer_auth" = []))
+)]
 pub async fn list_apps_handler(
-    State(state): State<crate::AppState>,
+    State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
 ) -> Result<Json<Vec<AppResponse>>, AppError> {
     let user_id = Uuid::parse_str(&claims.sub).map_err(|_| AppError::Unauthorized)?;
@@ -168,7 +172,7 @@ pub async fn list_apps_handler(
     delete,
     path = "/api/v1/apps/{id}",
     params(
-        ("id" = Uuid, Path, description = "Application ID")
+        ("id" = String, Path, description = "Application ID", example = "550e8400-e29b-41d4-a716-446655440000")
     ),
     responses(
         (status = 200, description = "Application deleted successfully"),
@@ -178,15 +182,11 @@ pub async fn list_apps_handler(
     security(("bearer_auth" = []))
 )]
 pub async fn delete_app_handler(
-    State(state): State<crate::AppState>,
-    Extension(claims): Extension<crate::middleware::auth::Claims>,
-    Path(app_id): Path<uuid::Uuid>,
-) -> Result<(StatusCode, Json<serde_json::Value>), crate::error::AppError> {
-    use crate::services::app::delete_app;
-    
-    let user_id = uuid::Uuid::parse_str(&claims.sub).map_err(|_| crate::error::AppError::Unauthorized)?;
-    
-    delete_app(&state.db, &state.docker, &state.event_publisher, user_id, app_id).await?;
-    
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(app_id): Path<Uuid>,
+) -> Result<(StatusCode, Json<serde_json::Value>), AppError> {
+    let user_id = Uuid::parse_str(&claims.sub).map_err(|_| AppError::Unauthorized)?;
+    app::delete_app(&state.db, &state.docker, &state.event_publisher, user_id, app_id).await?;
     Ok((StatusCode::OK, Json(serde_json::json!({ "message": "Application deleted successfully" }))))
 }
