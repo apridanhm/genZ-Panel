@@ -169,16 +169,17 @@ impl BuilderDaemon {
         }
         info!("✅ Docker image built successfully");
 
-        info!("🏃 Starting container: {}", container_name);
+        info!("🏃 Starting container: {} on port {}", container_name, event.exposed_port);
         let _ = self.docker.remove_container(&container_name, None).await;
 
-        let host_port = event.exposed_port.to_string();
+        // 🛡️ HORMATI INPUT USER: Gunakan port yang diminta user untuk host binding
         let container_port = format!("{}/tcp", event.exposed_port);
+        let host_port_str = event.exposed_port.to_string();
         
         let mut port_bindings = HashMap::new();
         port_bindings.insert(container_port.clone(), Some(vec![PortBinding {
             host_ip: Some("0.0.0.0".to_string()),
-            host_port: Some(host_port.clone()),
+            host_port: Some(host_port_str.clone()), // <-- Menggunakan port pilihan user
         }]));
 
         let mut exposed_ports = HashMap::new();
@@ -201,15 +202,26 @@ impl BuilderDaemon {
             ..Default::default()
         };
 
-        let container = self.docker
-            .create_container(
-                Some(CreateContainerOptions {
-                    name: container_name.clone(),
-                    platform: None,
-                }),
-                config,
-            )
-            .await?;
+        let container = match self.docker.create_container(
+            Some(CreateContainerOptions {
+                name: container_name.clone(),
+                platform: None,
+            }),
+            config,
+        ).await {
+            Ok(c) => c,
+            Err(e) => {
+                let err_msg = e.to_string();
+                if err_msg.contains("port is already allocated") {
+                    error!("❌ Port {} sudah digunakan oleh aplikasi lain di host ini.", event.exposed_port);
+                    self.update_status(event.app_id, "failed").await?;
+                    return Err(anyhow::anyhow!("Port {} is already allocated on the host. Please choose a different exposed_port.", event.exposed_port));
+                }
+                error!("❌ Failed to create container: {}", e);
+                self.update_status(event.app_id, "failed").await?;
+                return Err(anyhow::anyhow!("Failed to create container: {}", e));
+            }
+        };
 
         self.docker
             .start_container(&container.id, None::<StartContainerOptions<String>>)
